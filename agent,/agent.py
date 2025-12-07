@@ -13,10 +13,9 @@ console = Console()
 
 class Agent:
     """
-    Наш мини-агент:
-      - крутится в цикле шагов
-      - на каждом шаге: собираем DOM → спрашиваем LLM → выполняем action
-      - останавливается на action="done" или по max_steps
+    Мини-агент:
+      - на каждом шаге: собирает DOM → спрашивает LLM → выполняет действие
+      - завершается при action="done" или по max_steps
     """
 
     def __init__(
@@ -35,9 +34,6 @@ class Agent:
         self.last_dom: Optional[Dict[str, Any]] = None
 
     async def run(self) -> Optional[str]:
-        """
-        Запускает цикл агента.
-        """
         console.print(Panel.fit(f"[bold cyan]Задача:[/bold cyan] {self.task}"))
 
         final_result: Optional[str] = None
@@ -46,12 +42,12 @@ class Agent:
             console.print(f"\n[bold yellow]Шаг {step}/{self.max_steps}[/bold yellow]")
 
             if not self.browser.page:
-                raise RuntimeError("Browser.page = None, браузер не запущен")
+                raise RuntimeError("Ошибка: browser.page = None, браузер не запущен")
 
-            # 1. Собираем DOM
+            # ---------- 1. Сбор DOM ----------
             self.last_dom = await extract_dom(self.browser.page)
 
-            # 2. Спрашиваем LLM, что делать
+            # ---------- 2. Решение LLM ----------
             decision = await llm_decide(
                 client=self.llm_client,
                 task=self.task,
@@ -68,7 +64,7 @@ class Agent:
             if thoughts:
                 console.print(f"[blue]Thoughts:[/blue] {thoughts}")
 
-            # 3. Если done — завершаем
+            # ---------- 3. Если done ----------
             if action.lower() == "done":
                 result = args.get("result", "Задача завершена.")
                 console.print(Panel.fit(f"[bold green]DONE:[/bold green] {result}"))
@@ -83,24 +79,24 @@ class Agent:
                 )
                 break
 
-            # 4. Иначе выполняем действие
+            # ---------- 4. Выполняем действие ----------
             try:
                 result_str = await execute_action(self.browser, action, args)
                 console.print(f"[magenta]Result:[/magenta] {result_str}")
                 error = None
             except Exception as e:
-                err_text = "".join(
+                error_text = "".join(
                     traceback.format_exception(type(e), e, e.__traceback__)
                 )
                 console.print(
                     Panel.fit(
-                        f"[red]Ошибка при выполнении действия {action}[/red]\n{err_text}"
+                        f"[red]Ошибка при выполнении действия: {action}[/red]\n{error_text}"
                     )
                 )
                 result_str = f"ERROR: {str(e)}"
-                error = err_text
+                error = error_text
 
-            # 5. Записываем в историю
+            # ---------- 5. Пишем историю ----------
             self.history.append(
                 {
                     "step": step,
@@ -114,7 +110,7 @@ class Agent:
         if final_result is None:
             console.print(
                 Panel.fit(
-                    "[bold red]Агент достиг лимита шагов и не завершил задачу явно (done).[/bold red]"
+                    "[bold red]Агент достиг лимита шагов и не завершил задачу явно.[/bold red]"
                 )
             )
 
