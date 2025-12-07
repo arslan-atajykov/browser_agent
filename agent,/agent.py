@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ class Agent:
     Мини-агент:
       - на каждом шаге: собирает DOM → спрашивает LLM → выполняет действие
       - завершается при action="done" или по max_steps
+      - каждый шаг ограничен timeout=10 секунд
     """
 
     def __init__(
@@ -69,6 +71,7 @@ class Agent:
                 result = args.get("result", "Задача завершена.")
                 console.print(Panel.fit(f"[bold green]DONE:[/bold green] {result}"))
                 final_result = result
+
                 self.history.append(
                     {
                         "step": step,
@@ -79,11 +82,23 @@ class Agent:
                 )
                 break
 
-            # ---------- 4. Выполняем действие ----------
+            # ---------- 4. Выполняем действие с TIMEOUT ----------
             try:
-                result_str = await execute_action(self.browser, action, args)
+                result_str = await asyncio.wait_for(
+                    execute_action(self.browser, action, args),
+                    timeout=10,  # <===== ЛИМИТ 10 секунд
+                )
                 console.print(f"[magenta]Result:[/magenta] {result_str}")
                 error = None
+
+            except asyncio.TimeoutError:
+                error_text = (
+                    f"TIMEOUT: действие '{action}' выполнялось дольше 10 секунд."
+                )
+                console.print(Panel.fit(f"[red]{error_text}[/red]"))
+                result_str = error_text
+                error = error_text
+
             except Exception as e:
                 error_text = "".join(
                     traceback.format_exception(type(e), e, e.__traceback__)
@@ -107,6 +122,7 @@ class Agent:
                 }
             )
 
+        # ---------- Если модель так и не сказала "done" ----------
         if final_result is None:
             console.print(
                 Panel.fit(

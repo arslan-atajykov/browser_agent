@@ -8,7 +8,7 @@ from browser_agent.agent import Agent
 
 
 async def main_loop():
-    # 1. Инициализируем LLM-клиент (Haiku)
+    # 1. Инициализация LLM
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("❌ Не найден ANTHROPIC_API_KEY в окружении.")
@@ -19,34 +19,40 @@ async def main_loop():
 
     print("🤖 Browser Agent запущен. Пиши задачи.\n")
 
-    # 2. Основной цикл: после каждой задачи спрашиваем новую
-    while True:
-        task = input("Введите задачу (или 'exit' для выхода): ").strip()
-        if not task:
-            continue
-        if task.lower() in ("exit", "quit", "выход"):
-            print("👋 Выход из агента.")
-            break
+    # 2. Запуск браузера ОДИН раз
+    browser = Browser()
+    await browser.start()
 
-        # 3. Запускаем браузер под эту задачу
-        browser = Browser()  # без headless, как ты сейчас используешь
-        await browser.start()
+    try:
+        while True:
+            # 3. Читаем задачу
+            task = input("Введите задачу (или 'exit' для выхода): ").strip()
+            if not task:
+                continue
+            if task.lower() in ("exit", "quit", "выход"):
+                print("👋 Выход из агента.")
+                break
 
-        try:
+            # 4. Создаём агента и выполняем задачу
             agent = Agent(
                 task=task,
                 browser=browser,
                 llm_client=llm_client,
                 max_steps=15,
             )
+
             result = await agent.run()
 
             print("\n=== РЕЗУЛЬТАТ ===")
             print(result)
             print("=== КОНЕЦ ЗАДАЧИ ===\n")
 
-        finally:
-            await browser.close()
+            # ⚠️ Браузер НЕ закрывается — остаётся жить дальше
+            # благодаря циклу можно вводить новую задачу
+
+    finally:
+        print("🛑 Закрываю браузер...")
+        await browser.close()
 
 
 def main():
