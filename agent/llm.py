@@ -1,16 +1,16 @@
-# browser_agent/agent/llm.py
 import json
 from typing import Any, Dict, List
 
-from anthropic import AsyncAnthropic
-from config import ANTHROPIC_MODEL
+from anthropic import Anthropic
+
+from browser_agent.config import ANTHROPIC_MODEL
 
 
 SYSTEM_PROMPT = """
 Ты — умный браузерный агент.
 
 У тебя есть:
-- Задача пользователя.
+- Задача пользователя (на естественном языке).
 - Текущее состояние страницы (DOM-выжимка: url, title, кнопки, ссылки, инпуты).
 - История предыдущих шагов.
 
@@ -18,39 +18,39 @@ SYSTEM_PROMPT = """
 navigate, click, type, scroll, wait, press, done.
 
 =========================
-ГЛАВНЫЕ ПРАВИЛА
+ВАЖНЕЙШИЕ ПРАВИЛА
 =========================
 
-1) Если цель задачи уже достигнута — сразу делай:
+1) ЕСЛИ ЗАДАЧА ПО СУТИ ВЫПОЛНЕНА → ДЕЛАЙ:
 {
   "action": "done",
   "args": { "result": "краткое описание успеха" }
 }
+2) Если текущий URL содержит "watch?v=" (например YouTube видео) — это означает, что видео уже ОТКРЫТО.
+В этом случае задача считается выполненной, и ты ДОЛЖЕН вернуть:
 
-2) Если URL содержит "watch?v=" — видео УЖЕ открыто.
-   Значит:
 {
   "action": "done",
-  "args": { "result": "Видео успешно открыто" }
+  "args": { "result": "Видео открыто" }
 }
 
-3) НИКОГДА не выполняй повторный navigate на тот же домен/URL.
-   Если уже на целевом сайте → делай done.
+Никогда не пытайся выполнять поиск повторно, если видео уже открыто.
 
-4) НИКОГДА не делай одинаковое действие два раза подряд
-   (navigate → navigate, click → click на тот же index, type → type и т.п.).
+Примеры выполнения задачи:
+- Открыт нужный сайт (URL содержит целевой домен).
+- На YouTube открыт URL формата "watch?v=" → видео открыто.
+- На Маркете отображена страница результатов поиска.
+- Пользовательская цель достигнута по смыслу.
 
-5) НЕ кликай по невидимым или пустым элементам.
+2) НИКОГДА не повторяй одно и то же действие снова,
+   если оно уже было в последних шагах истории.
 
-6) НЕ кликай два раза по одному и тому же элементу.
+3) НЕ кликай по невидимым и пустым элементам.
+   Если элемент по индексу невидим или пуст — выбирай другой.
 
-7) Если загрузился нужный сайт (например market.yandex.ru) —
-   повторно navigate на Market НЕ делать. Считай задачу выполненной.
+4) НЕ кликай по тому же элементу дважды подряд.
 
-8) Если пользователь говорит "закрыть сайт" —
-   в одновкладочном браузере это означает:
-   ПРОСТО выполнить navigate на другой сайт ОДИН РАЗ.
-   Никаких прыжков туда-сюда.
+5) Если сайт уже находится там, куда пытаешься navigate → НЕ повторяй navigate.
 
 =========================
 ДОСТУПНЫЕ ДЕЙСТВИЯ
@@ -90,17 +90,20 @@ navigate, click, type, scroll, wait, press, done.
 }
 """
 
-
 def _trim(s: str, max_len: int) -> str:
     return s if len(s) <= max_len else s[: max_len - 3] + "..."
 
 
 async def llm_decide(
-    client: AsyncAnthropic,
+    client: Anthropic,
     task: str,
     dom: Dict[str, Any],
     history: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """
+    Делает один шаг: даёт Claude задачу, DOM и историю, возвращает JSON-решение.
+    """
+    # История в виде текста (коротко)
     history_text_parts = []
     for step in history[-10:]:
         history_text_parts.append(
@@ -125,38 +128,45 @@ async def llm_decide(
         "Текущее состояние страницы (DOM-выжимка):\n"
         f"{json.dumps(dom_preview, ensure_ascii=False, indent=2)}\n\n"
         "ВЫБЕРИ СЛЕДУЮЩЕЕ ДЕЙСТВИЕ. "
-        "Ответь СТРОГО В ФОРМАТЕ JSON.\n"
+        "Ответь СТРОГО В ФОРМАТЕ JSON (без текста вокруг, без форматирования).\n"
     )
 
-    # ✅ THIS LINE MUST HAVE 'await'
-    response = await client.messages.create(
+    response = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=512,
         temperature=0.1,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_content}],
+        messages=[
+            {
+                "role": "user",
+                "content": user_content,
+            }
+        ],
     )
 
-    # Extract text
+    # Собираем текст из блоков
     text = ""
     for block in response.content:
         if block.type == "text":
             text += block.text
-    text = text.strip()
 
-    # Extract JSON
+    text = text.strip()
+    # На всякий случай обрежем всё до первой '{'
     if "{" in text:
-        text = text[text.index("{"):]
+        text = text[text.index("{") :]
+    # И до последней '}'
     if "}" in text:
-        text = text[:text.rindex("}") + 1]
+        last = text.rfind("}")
+        text = text[: last + 1]
 
     try:
         data = json.loads(text)
     except Exception as e:
-        raise RuntimeError(f"Ошибка парсинга JSON: {e}\nОтвет модели:\n{text}")
+        raise RuntimeError(f"Не удалось распарсить JSON из ответа модели: {e}\nОтвет:\n{text}")
 
+    # Минимальная валидация
     if "action" not in data or "args" not in data:
-        raise RuntimeError(f"Некорректный JSON: {data}")
+        raise RuntimeError(f"Некорректный формат ответа модели: {data}")
 
     if "thoughts" not in data:
         data["thoughts"] = ""
