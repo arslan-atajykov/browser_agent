@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from browser_agent.browser import Browser
+from browser import Browser
 
 
 async def execute_action(

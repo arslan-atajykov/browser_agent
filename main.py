@@ -3,8 +3,8 @@ import asyncio
 import os
 
 from anthropic import Anthropic
-from browser_agent.browser import Browser
-from browser_agent.agent import Agent
+from browser import Browser
+from agent import Agent
 
 
 async def main_loop():
