@@ -1,78 +1,77 @@
 from typing import Dict, Any, List
-
 from playwright.async_api import Page
 
-
 async def extract_dom(page: Page) -> Dict[str, Any]:
-    """
-    Собирает компактное представление страницы:
-      - url, title
-      - немного HTML
-      - списки кнопок, ссылок, инпутов с индексами
-    Это то, что мы будем давать LLM.
-    """
-    url = page.url
-    title = await page.title()
-    html = await page.content()
+    """ Надёжный DOM-сборщик. Не падает даже при сломанной навигации. """
 
-    # ограничим HTML
-    max_html = 8000
-    if len(html) > max_html:
-        html = html[:max_html] + "\n<!-- truncated -->"
+    # URL
+    try:
+        url = page.url
+    except:
+        url = ""
 
-    # кнопки
-    button_locator = page.locator("button, [role='button']")
-    button_texts: List[str] = await button_locator.all_text_contents()
+    # TITLE
+    try:
+        title = await page.title()
+    except:
+        title = ""
+
+    # HTML (ограничение 8kb)
+    try:
+        html = await page.content()
+        if len(html) > 8000:
+            html = html[:8000] + "\n<!-- truncated -->"
+    except:
+        html = ""
+
+    # Buttons
     buttons = []
-    for idx, txt in enumerate(button_texts):
-        norm = " ".join(txt.split())
-        if not norm:
-            norm = "(пустой текст)"
-        buttons.append(
-            {
-                "index": idx,
-                "text": norm[:200],
-            }
-        )
+    try:
+        locator = page.locator("button, [role='button']")
+        texts = await locator.all_text_contents()
+        for idx, txt in enumerate(texts):
+            t = txt.strip()
+            if not t:
+                t = "(empty)"
+            buttons.append({"index": idx, "text": t[:200]})
+    except:
+        pass
 
-    # ссылки
-    link_locator = page.locator("a")
-    link_texts: List[str] = await link_locator.all_text_contents()
+    # Links
     links = []
-    for idx, txt in enumerate(link_texts):
-        norm = " ".join(txt.split())
-        if not norm:
-            continue
-        links.append(
-            {
-                "index": idx,
-                "text": norm[:200],
-            }
-        )
-        if len(links) >= 50:
-            break
+    try:
+        locator = page.locator("a")
+        texts = await locator.all_text_contents()
+        for idx, txt in enumerate(texts):
+            t = txt.strip()
+            if t:
+                links.append({"index": idx, "text": t[:200]})
+                if len(links) >= 50:
+                    break
+    except:
+        pass
 
-    # инпуты
-    input_locator = page.locator("input, textarea")
-    input_elements = await input_locator.all()
+    # Inputs
     inputs = []
-    for idx, el in enumerate(input_elements):
-        attrs = {}
-        for name in ["id", "name", "type", "placeholder", "value"]:
-            try:
-                v = await el.get_attribute(name)
-                if v:
-                    attrs[name] = v[:200]
-            except Exception:
-                pass
-        inputs.append(
-            {
-                "index": idx,
-                "attrs": attrs,
-            }
-        )
-        if len(inputs) >= 50:
-            break
+    try:
+        locator = page.locator("input, textarea")
+        els = await locator.all()
+
+        for idx, el in enumerate(els):
+            attrs = {}
+            for name in ["id", "name", "type", "placeholder", "value"]:
+                try:
+                    v = await el.get_attribute(name)
+                    if v:
+                        attrs[name] = v[:200]
+                except:
+                    pass
+
+            inputs.append({"index": idx, "attrs": attrs})
+            if len(inputs) >= 50:
+                break
+    except:
+        pass
 
     return {
         "url": url,
